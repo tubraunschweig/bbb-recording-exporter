@@ -36,6 +36,8 @@ meeting_id = opts[:meeting_id]
 @published_files_output = opts[:output]
 @tmp = "/opt/worker4/tmp/#{meeting_id}"
 
+exit(0) if meeting_id.nil?
+
 logger = Logger.new($stdout)
 logger.level = Logger::INFO
 Log = logger

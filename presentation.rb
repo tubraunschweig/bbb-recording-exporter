@@ -38,8 +38,9 @@ meeting_id = opts[:meeting_id]
 
 logger = Logger.new($stdout)
 logger.level = Logger::INFO
+Log = logger
 
-logger.info("Started exporting presentation for [#{meeting_id}]")
+Log.info("Started exporting presentation for [#{meeting_id}]")
 
 FileUtils.mkdir_p(["#{@tmp}, #{@tmp}/chats", "#{@tmp}/cursor", "#{@tmp}/frames", "#{@tmp}/timestamps"])
 
@@ -125,7 +126,7 @@ WhiteboardElement = Struct.new(:begin, :end, :value, :id)
 WhiteboardSlide = Struct.new(:href, :begin, :end, :width, :height)
 
 def run_command(command, silent = false)
-  logger.info("Running: #{command}") unless silent
+  Log.info("Running: #{command}") unless silent
   output = `#{command}`
   [$CHILD_STATUS.success?, output]
 end
@@ -892,17 +893,17 @@ def export_presentation
   render_cursor(panzooms, Nokogiri::XML::Reader(File.open("#{@published_files}/cursor.xml")))
   render_whiteboard(panzooms, slides, shapes, timestamps)
 
-  logger.info("Finished composing presentation. Time: #{Time.now - start}")
+  Log.info("Finished composing presentation. Time: #{Time.now - start}")
 
   start = Time.now
-  logger.info('Starting to export video')
+  Log.info('Starting to export video')
 
   render_video(duration, meeting_name)
   add_chapters(duration, slides)
   add_captions if CAPTION_SUPPORT
 
   FileUtils.mv("#{@tmp}/meeting-tmp.mp4", "#{@published_files_output}")
-  logger.info("Exported recording available at #{@published_files_output}. Rendering took: #{Time.now - start}")
+  Log.info("Exported recording available at #{@published_files_output}. Rendering took: #{Time.now - start}")
 end
 
 export_presentation

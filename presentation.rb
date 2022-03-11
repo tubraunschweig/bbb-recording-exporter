@@ -12,6 +12,7 @@ require 'loofah'
 require 'nokogiri'
 require 'optimist'
 require 'yaml'
+require_relative 'lib/interval_tree'
 
 require File.expand_path('../../../lib/recordandplayback', __FILE__)
 require File.expand_path('../../../lib/recordandplayback/interval_tree', __FILE__)
@@ -20,26 +21,25 @@ include IntervalTree
 
 opts = Optimist.options do
   opt :meeting_id, 'Meeting id to archive', type: String
-  opt :format, 'Playback format name', type: String
-  opt :log_stdout, 'Log to STDOUT', type: :flag
+  opt :input, 'input', type: String
+  opt :output, 'output', type: String
+  opt :hide_chat, 'hide_chat', type: :flag
+  opt :hide_chat_names, 'hide_chat_names', type: :flag
+  opt :hide_webcams, 'hide_webcams', type: :flag
 end
 
 meeting_id = opts[:meeting_id]
-playback = opts[:format]
+@published_files = opts[:input]
+@published_files_output = opts[:output]
+@tmp = '/opt/worker4/tmp/' + opts[:meeting_id]
 
-exit(0) if playback != 'presentation'
-
-logger = opts[:log_stdout] ? Logger.new($stdout) : Logger.new('/var/log/bigbluebutton/post_publish.log', 'weekly')
+logger = Logger.new($stdout)
 logger.level = Logger::INFO
 BigBlueButton.logger = logger
 
 BigBlueButton.logger.info("Started exporting presentation for [#{meeting_id}]")
 
-@published_files = "/var/bigbluebutton/published/presentation/#{meeting_id}"
-
-# Creates scratch directories
-FileUtils.mkdir_p(["#{@published_files}/chats", "#{@published_files}/cursor", "#{@published_files}/frames",
-                   "#{@published_files}/timestamps", "/var/bigbluebutton/published/video/#{meeting_id}"])
+FileUtils.mkdir_p(["#{@tmp}, #{@tmp}/chats", "#{@tmp}/cursor", "#{@tmp}/frames", "#{@tmp}/timestamps"])
 
 TEMPORARY_FILES_PERMISSION = 0o600
 
@@ -76,14 +76,20 @@ OUTPUT_WIDTH = 1920
 OUTPUT_HEIGHT = 1080
 
 # Playback layout
+HIDE_WEBCAMS = opts[:hide_webcams]
+
 WEBCAMS_WIDTH = 320
 WEBCAMS_HEIGHT = 240
 
 CHAT_WIDTH = WEBCAMS_WIDTH
-CHAT_HEIGHT = OUTPUT_HEIGHT - WEBCAMS_HEIGHT
+CHAT_HEIGHT << if HIDE_WEBCAMS
+  OUTPUT_HEIGHT
+else
+  OUTPUT_HEIGHT - WEBCAMS_HEIGHT
+end
 
-HIDE_CHAT = false
-HIDE_CHAT_NAMES = false
+HIDE_CHAT = opts[:hide_chat]
+HIDE_CHAT_NAMES = opts[:hide_chat_names]
 
 HIDE_DESKSHARE = false
 
@@ -97,7 +103,11 @@ CHAT_CANVAS_WIDTH = (8032 / CHAT_WIDTH) * CHAT_WIDTH
 CHAT_CANVAS_HEIGHT = (32_767 / CHAT_FONT_SIZE) * CHAT_FONT_SIZE
 
 # Dimensions of the whiteboard area
-SLIDES_WIDTH = OUTPUT_WIDTH - WEBCAMS_WIDTH
+SLIDES_WIDTH << if HIDE_WEBCAMS && HIDE_CHAT
+  OUTPUT_WIDTH
+else
+  OUTPUT_WIDTH - WEBCAMS_WIDTH
+end
 SLIDES_HEIGHT = OUTPUT_HEIGHT
 
 # Input deskshare dimensions. Is scaled to fit whiteboard area keeping aspect ratio
@@ -135,13 +145,13 @@ def add_captions
      language_names << "-metadata:s:s:#{i} language=#{caption['localeName'].downcase[0..2]} "
   end
 
-  render = "ffmpeg -i #{@published_files}/meeting-tmp.mp4 #{caption_input} " \
+  render = "ffmpeg -i #{@tmp}/meeting-tmp.mp4 #{caption_input} " \
            "-map 0:v -map 0:a #{maps} -c:v copy -c:a copy -c:s mov_text #{language_names} " \
-           "-y #{@published_files}/meeting_captioned.mp4"
+           "-y #{@tmp}/meeting_captioned.mp4"
 
   success, = run_command(render)
   if success
-    FileUtils.mv("#{@published_files}/meeting_captioned.mp4", "#{@published_files}/meeting-tmp.mp4")
+    FileUtils.mv("#{@tmp}/meeting_captioned.mp4", "#{@tmp}/meeting-tmp.mp4")
   else
     warn('An error occurred adding the captions to the video.')
       exit(false)
@@ -150,7 +160,7 @@ end
 
 def add_chapters(duration, slides)
   # Extract metadata
-  command = "ffmpeg -i #{@published_files}/meeting-tmp.mp4 -y -f ffmetadata #{@published_files}/meeting_metadata"
+  command = "ffmpeg -i #{@tmp}/meeting-tmp.mp4 -y -f ffmetadata #{@tmp}/meeting_metadata"
 
   success, = run_command(command)
   unless success
@@ -181,35 +191,20 @@ def add_chapters(duration, slides)
     chapter << "[CHAPTER]\nSTART=#{chapter_start * 1e9}\nEND=#{chapter_end * 1e9}\ntitle=#{title}\n\n"
   end
 
-  File.open("#{@published_files}/meeting_metadata", 'a') do |file|
+  File.open("#{@tmp}/meeting_metadata", 'a') do |file|
     file << chapter
   end
 
-  render = "ffmpeg -i #{@published_files}/meeting-tmp.mp4 " \
-           "-i #{@published_files}/meeting_metadata -map_metadata 1 " \
-           "-map_chapters 1 -codec copy -y -t #{duration} #{@published_files}/meeting_chapters.mp4"
+  render = "ffmpeg -i #{@tmp}/meeting-tmp.mp4 " \
+           "-i #{@tmp}/meeting_metadata -map_metadata 1 " \
+           "-map_chapters 1 -codec copy -y -t #{duration} #{@tmp}/meeting_chapters.mp4"
 
   success, = run_command(render)
   if success
-    FileUtils.mv("#{@published_files}/meeting_chapters.mp4", "#{@published_files}/meeting-tmp.mp4")
+    FileUtils.mv("#{@tmp}/meeting_chapters.mp4", "#{@tmp}/meeting-tmp.mp4")
   else
     warn('Failed to add the chapters to the video.')
     exit(false)
-  end
-end
-
-def add_greenlight_buttons(metadata)
-  bbb_props = File.open(File.join(__dir__, '../bigbluebutton.yml')) { |f| YAML.safe_load(f) }
-  playback_protocol = bbb_props['playback_protocol']
-  playback_host = bbb_props['playback_host']
-
-  meeting_id = metadata.xpath('recording/id').inner_text
-
-  metadata.xpath('recording/playback/format').children.first.content = 'video'
-  metadata.xpath('recording/playback/link').children.first.content = "#{playback_protocol}://#{playback_host}/presentation/#{meeting_id}/meeting.mp4"
-
-  File.open("/var/bigbluebutton/published/video/#{meeting_id}/metadata.xml", 'w') do |file|
-    file.write(metadata)
   end
 end
 
@@ -346,7 +341,7 @@ def convert_whiteboard_shapes(whiteboard)
   end
 
   # Save new shapes.svg copy
-  File.open("#{@published_files}/shapes_modified.svg", 'w', TEMPORARY_FILES_PERMISSION) do |file|
+  File.open("#{@tmp}/shapes_modified.svg", 'w', TEMPORARY_FILES_PERMISSION) do |file|
     file.write(whiteboard)
   end
 end
@@ -582,11 +577,11 @@ def render_chat(chat_reader)
   builder_root.set_attribute('height', cropped_chat_canvas_height)
 
   # Saves chat as SVG / SVGZ file
-  File.open("#{@published_files}/chats/chat.svg", 'w', TEMPORARY_FILES_PERMISSION) do |file|
+  File.open("#{@tmp}/chats/chat.svg", 'w', TEMPORARY_FILES_PERMISSION) do |file|
     file.write(builder)
   end
 
-  File.open("#{@published_files}/timestamps/chat_timestamps", 'w', TEMPORARY_FILES_PERMISSION) do |file|
+  File.open("#{@tmp}/timestamps/chat_timestamps", 'w', TEMPORARY_FILES_PERMISSION) do |file|
     overlay_position.each do |timestamp, x, y|
       file.puts "#{timestamp} crop@c x #{x}, crop@c y #{y};"
     end
@@ -602,7 +597,7 @@ def render_cursor(panzooms, cursor_reader)
     builder.circle(cx: CURSOR_RADIUS, cy: CURSOR_RADIUS, r: CURSOR_RADIUS, fill: 'red')
   end
 
-  File.open("#{@published_files}/cursor/cursor.svg", 'w', TEMPORARY_FILES_PERMISSION) do |svg|
+  File.open("#{@tmp}/cursor/cursor.svg", 'w', TEMPORARY_FILES_PERMISSION) do |svg|
     svg.write(builder.target!)
   end
 
@@ -620,7 +615,7 @@ def render_cursor(panzooms, cursor_reader)
   end
 
   panzoom_index = 0
-  File.open("#{@published_files}/timestamps/cursor_timestamps", 'w', TEMPORARY_FILES_PERMISSION) do |file|
+  File.open("#{@tmp}/timestamps/cursor_timestamps", 'w', TEMPORARY_FILES_PERMISSION) do |file|
     timestamps.each.with_index do |timestamp, frame_number|
       panzoom = panzooms[panzoom_index]
 
@@ -663,7 +658,7 @@ def render_cursor(panzooms, cursor_reader)
       cursor_y += y_offset
 
       # Move whiteboard to the right, making space for the chat and webcams
-      cursor_x += WEBCAMS_WIDTH
+      cursor_x += WEBCAMS_WIDTH if !HIDE_WEBCAMS && !HIDE_CHAT
 
       # Writes the timestamp and position down
       file.puts "#{timestamp} overlay@m x #{cursor_x.round(3)}, overlay@m y #{cursor_y.round(3)};"
@@ -674,60 +669,99 @@ end
 def render_video(duration, meeting_name)
   # Determine if video had screensharing / chat messages
   deskshare = !HIDE_DESKSHARE && File.file?("#{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION}")
-  chat = !HIDE_CHAT && File.file?("#{@published_files}/chats/chat.svg")
+  chat = !HIDE_CHAT && File.file?("#{@tmp}/chats/chat.svg")
 
   render = "ffmpeg -f lavfi -i color=c=#{BACKGROUND_COLOR}:s=#{OUTPUT_WIDTH}x#{OUTPUT_HEIGHT} " \
-           "-f concat -safe 0 #{BASE_URI} -i #{@published_files}/timestamps/whiteboard_timestamps " \
-           "-framerate 10 -loop 1 -i #{@published_files}/cursor/cursor.svg "
+           "-f concat -safe 0 #{BASE_URI} -i #{@tmp}/timestamps/whiteboard_timestamps " \
+           "-framerate 10 -loop 1 -i #{@tmp}/cursor/cursor.svg "
 
   if chat
-    render << "-framerate 1 -loop 1 -i #{@published_files}/chats/chat.svg " \
-              "-i #{@published_files}/video/webcams.#{VIDEO_EXTENSION} "
+    if HIDE_WEBCAMS
+      render << "-framerate 1 -loop 1 -i #{@tmp}/chats/chat.svg "
+      render << if deskshare
+        "-i #{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION} -filter_complex " \
+          "'[2]sendcmd=f=#{@tmp}/timestamps/cursor_timestamps[cursor];" \
+          "[3]sendcmd=f=#{@tmp}/timestamps/chat_timestamps," \
+          "crop@c=w=#{CHAT_WIDTH}:h=#{CHAT_HEIGHT}:x=0:y=0[chat];" \
+          "[4]scale=w=#{SLIDES_WIDTH}:h=#{SLIDES_HEIGHT}:force_original_aspect_ratio=1[deskshare];" \
+          "[0][deskshare]overlay=x=#{CHAT_WIDTH}:y=#{DESKSHARE_Y_OFFSET}[screenshare];" \
+          "[screenshare][1]overlay=x=#{CHAT_WIDTH}[slides];" \
+          '[slides][cursor]overlay@m[whiteboard];' \
+          "[whiteboard][chat]overlay' "
+      else
+          "-filter_complex '[2]sendcmd=f=#{@tmp}/timestamps/cursor_timestamps[cursor];" \
+            "[3]sendcmd=f=#{@tmp}/timestamps/chat_timestamps," \
+            "crop@c=w=#{CHAT_WIDTH}:h=#{CHAT_HEIGHT}:x=0:y=0[chat];" \
+            "[0][1]overlay=x=#{CHAT_WIDTH}[slides];" \
+            '[slides][cursor]overlay@m[whiteboard];' \
+            "[whiteboard][chat]overlay' "
+      end
+    else
+      render << "-framerate 1 -loop 1 -i #{@tmp}/chats/chat.svg " \
+                "-i #{@published_files}/video/webcams.#{VIDEO_EXTENSION} "
 
-    render << if deskshare
-       "-i #{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION} -filter_complex " \
-         "'[2]sendcmd=f=#{@published_files}/timestamps/cursor_timestamps[cursor];" \
-         "[3]sendcmd=f=#{@published_files}/timestamps/chat_timestamps," \
-         "crop@c=w=#{CHAT_WIDTH}:h=#{CHAT_HEIGHT}:x=0:y=0[chat];" \
-         "[4]scale=w=#{WEBCAMS_WIDTH}:h=#{WEBCAMS_HEIGHT}[webcams];" \
-         "[5]scale=w=#{SLIDES_WIDTH}:h=#{SLIDES_HEIGHT}:force_original_aspect_ratio=1[deskshare];" \
-         "[0][deskshare]overlay=x=#{WEBCAMS_WIDTH}:y=#{DESKSHARE_Y_OFFSET}[screenshare];" \
-         "[screenshare][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
-                  '[slides][cursor]overlay@m[whiteboard];' \
-         "[whiteboard][chat]overlay=y=#{WEBCAMS_HEIGHT}[chats];" \
-         "[chats][webcams]overlay' "
-     else
-        "-filter_complex '[2]sendcmd=f=#{@published_files}/timestamps/cursor_timestamps[cursor];" \
-          "[3]sendcmd=f=#{@published_files}/timestamps/chat_timestamps," \
+      render << if deskshare
+        "-i #{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION} -filter_complex " \
+          "'[2]sendcmd=f=#{@tmp}/timestamps/cursor_timestamps[cursor];" \
+          "[3]sendcmd=f=#{@tmp}/timestamps/chat_timestamps," \
           "crop@c=w=#{CHAT_WIDTH}:h=#{CHAT_HEIGHT}:x=0:y=0[chat];" \
           "[4]scale=w=#{WEBCAMS_WIDTH}:h=#{WEBCAMS_HEIGHT}[webcams];" \
-          "[0][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
-                  '[slides][cursor]overlay@m[whiteboard];' \
-          "[whiteboard][chat]overlay=y=#{WEBCAMS_HEIGHT}[chats];[chats][webcams]overlay' "
-               end
+          "[5]scale=w=#{SLIDES_WIDTH}:h=#{SLIDES_HEIGHT}:force_original_aspect_ratio=1[deskshare];" \
+          "[0][deskshare]overlay=x=#{WEBCAMS_WIDTH}:y=#{DESKSHARE_Y_OFFSET}[screenshare];" \
+          "[screenshare][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
+                    '[slides][cursor]overlay@m[whiteboard];' \
+          "[whiteboard][chat]overlay=y=#{WEBCAMS_HEIGHT}[chats];" \
+          "[chats][webcams]overlay' "
+      else
+          "-filter_complex '[2]sendcmd=f=#{@tmp}/timestamps/cursor_timestamps[cursor];" \
+            "[3]sendcmd=f=#{@tmp}/timestamps/chat_timestamps," \
+            "crop@c=w=#{CHAT_WIDTH}:h=#{CHAT_HEIGHT}:x=0:y=0[chat];" \
+            "[4]scale=w=#{WEBCAMS_WIDTH}:h=#{WEBCAMS_HEIGHT}[webcams];" \
+            "[0][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
+                    '[slides][cursor]overlay@m[whiteboard];' \
+            "[whiteboard][chat]overlay=y=#{WEBCAMS_HEIGHT}[chats];[chats][webcams]overlay' "
+      end
+    end
   else
-    render << "-i #{@published_files}/video/webcams.#{VIDEO_EXTENSION} "
-
-    render << if deskshare
-      "-i #{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION} -filter_complex " \
-        "'[2]sendcmd=f=#{@published_files}/timestamps/cursor_timestamps[cursor];" \
-        "[3]scale=w=#{WEBCAMS_WIDTH}:h=#{WEBCAMS_HEIGHT}[webcams];" \
-        "[4]scale=w=#{SLIDES_WIDTH}:h=#{SLIDES_HEIGHT}:force_original_aspect_ratio=1[deskshare];" \
-        "[0][deskshare]overlay=x=#{WEBCAMS_WIDTH}:y=#{DESKSHARE_Y_OFFSET}[screenshare];" \
-        "[screenshare][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
-                  '[slides][cursor]overlay@m[whiteboard];' \
-        "[whiteboard][webcams]overlay' "
+    if HIDE_WEBCAMS
+      render << if deskshare
+        "-i #{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION} -filter_complex " \
+          "'[2]sendcmd=f=#{@tmp}/timestamps/cursor_timestamps[cursor];" \
+          "[3]scale=w=#{SLIDES_WIDTH}:h=#{SLIDES_HEIGHT}:force_original_aspect_ratio=1[deskshare];" \
+          "[0][deskshare]overlay[screenshare];" \
+          "[screenshare][1]overlay[slides];" \
+          '[slides][cursor]overlay@m\' '
+      else
+        "-filter_complex '[2]sendcmd=f=#{@tmp}/timestamps/cursor_timestamps[cursor];" \
+          "[3]scale=w=#{WEBCAMS_WIDTH}:h=#{WEBCAMS_HEIGHT}[webcams];" \
+          "[0][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
+                    '[slides][cursor]overlay@m[whiteboard];' \
+          "[whiteboard][webcams]overlay' "
+      end
     else
-      "-filter_complex '[2]sendcmd=f=#{@published_files}/timestamps/cursor_timestamps[cursor];" \
-        "[3]scale=w=#{WEBCAMS_WIDTH}:h=#{WEBCAMS_HEIGHT}[webcams];" \
-        "[0][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
-                  '[slides][cursor]overlay@m[whiteboard];' \
-        "[whiteboard][webcams]overlay' "
-              end
+      render << "-i #{@published_files}/video/webcams.#{VIDEO_EXTENSION} "
+
+      render << if deskshare
+        "-i #{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION} -filter_complex " \
+          "'[2]sendcmd=f=#{@tmp}/timestamps/cursor_timestamps[cursor];" \
+          "[3]scale=w=#{WEBCAMS_WIDTH}:h=#{WEBCAMS_HEIGHT}[webcams];" \
+          "[4]scale=w=#{SLIDES_WIDTH}:h=#{SLIDES_HEIGHT}:force_original_aspect_ratio=1[deskshare];" \
+          "[0][deskshare]overlay=x=#{WEBCAMS_WIDTH}:y=#{DESKSHARE_Y_OFFSET}[screenshare];" \
+          "[screenshare][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
+                    '[slides][cursor]overlay@m[whiteboard];' \
+          "[whiteboard][webcams]overlay' "
+      else
+        "-filter_complex '[2]sendcmd=f=#{@tmp}/timestamps/cursor_timestamps[cursor];" \
+          "[3]scale=w=#{WEBCAMS_WIDTH}:h=#{WEBCAMS_HEIGHT}[webcams];" \
+          "[0][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
+                    '[slides][cursor]overlay@m[whiteboard];' \
+          "[whiteboard][webcams]overlay' "
+      end
+    end
   end
 
   render << "-c:a aac -crf #{CONSTANT_RATE_FACTOR} -shortest -y -t #{duration} -threads #{THREADS} " \
-            "-metadata title=#{Shellwords.escape("#{meeting_name}")} #{BENCHMARK} #{@published_files}/meeting-tmp.mp4"
+            "-metadata title=#{Shellwords.escape("#{meeting_name}")} #{BENCHMARK} #{@tmp}/meeting-tmp.mp4"
 
   success, = run_command(render)
   unless success
@@ -746,7 +780,7 @@ def render_whiteboard(panzooms, slides, shapes, timestamps)
   frame_number = 0
 
   # Render the visible frame for each interval
-  File.open("#{@published_files}/timestamps/whiteboard_timestamps", 'w', TEMPORARY_FILES_PERMISSION) do |file|
+  File.open("#{@tmp}/timestamps/whiteboard_timestamps", 'w', TEMPORARY_FILES_PERMISSION) do |file|
     slide_number = 0
     slide = slides[slide_number]
     view_box = ''
@@ -817,7 +851,7 @@ def svg_export(draw, view_box, slide_href, width, height, frame_number)
     end
   end
 
-  File.open("#{@published_files}/frames/frame#{frame_number}.#{SVG_EXTENSION}", 'w',
+  File.open("#{@tmp}/frames/frame#{frame_number}.#{SVG_EXTENSION}", 'w',
               TEMPORARY_FILES_PERMISSION) do |svg|
     if SVGZ_COMPRESSION
       svgz = Zlib::GzipWriter.new(svg, Zlib::BEST_SPEED)
@@ -843,7 +877,7 @@ def export_presentation
   meeting_name = metadata.xpath('recording/meta/meetingName').inner_text
 
   shapes, slides, timestamps =
-    parse_whiteboard_shapes(Nokogiri::XML::Reader(File.read("#{@published_files}/shapes_modified.svg")))
+    parse_whiteboard_shapes(Nokogiri::XML::Reader(File.read("#{@tmp}/shapes_modified.svg")))
   panzooms, timestamps = parse_panzooms(Nokogiri::XML::Reader(File.read("#{@published_files}/panzooms.xml")),
                                         timestamps)
 
@@ -865,17 +899,13 @@ def export_presentation
   add_chapters(duration, slides)
   add_captions if CAPTION_SUPPORT
 
-  FileUtils.mv("#{@published_files}/meeting-tmp.mp4", "#{@published_files}/meeting.mp4")
-  BigBlueButton.logger.info("Exported recording available at #{@published_files}/meeting.mp4. Rendering took: #{Time.now - start}")
-
-  add_greenlight_buttons(metadata)
+  FileUtils.mv("#{@tmp}/meeting-tmp.mp4", "#{@published_files_output}")
+  BigBlueButton.logger.info("Exported recording available at #{@published_files_output}. Rendering took: #{Time.now - start}")
 end
 
 export_presentation
 
 # Delete the contents of the scratch directories
-FileUtils.rm_rf(["#{@published_files}/chats", "#{@published_files}/cursor", "#{@published_files}/frames",
-                 "#{@published_files}/timestamps", "#{@published_files}/shapes_modified.svg",
-                 "#{@published_files}/meeting_metadata"])
+FileUtils.rm_rf(["#{@tmp}"])
 
 exit(0)

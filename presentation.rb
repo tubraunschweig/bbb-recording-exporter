@@ -28,7 +28,7 @@ end
 meeting_id = opts[:meeting_id]
 @published_files = opts[:input]
 @published_files_output = opts[:output]
-@tmp = '/opt/worker4/tmp/' + opts[:meeting_id]
+@tmp = "/opt/worker4/tmp/#{meeting_id}"
 
 logger = Logger.new($stdout)
 logger.level = Logger::INFO

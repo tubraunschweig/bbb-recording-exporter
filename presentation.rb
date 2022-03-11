@@ -14,6 +14,11 @@ require 'optimist'
 require 'yaml'
 require_relative 'lib/interval_tree'
 
+require 'optparse'
+require 'psych'
+require "shellwords"
+require 'logger'
+
 include IntervalTree
 
 opts = Optimist.options do

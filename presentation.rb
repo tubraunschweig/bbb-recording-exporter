@@ -44,7 +44,7 @@ Log = logger
 
 Log.info("Started exporting presentation for [#{meeting_id}]")
 
-FileUtils.mkdir_p(["#{@tmp}, #{@tmp}/chats", "#{@tmp}/cursor", "#{@tmp}/frames", "#{@tmp}/timestamps"])
+FileUtils.mkdir_p(["#{@tmp}", "#{@tmp}/chats", "#{@tmp}/cursor", "#{@tmp}/frames", "#{@tmp}/timestamps"])
 
 TEMPORARY_FILES_PERMISSION = 0o600
 

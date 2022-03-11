@@ -14,9 +14,6 @@ require 'optimist'
 require 'yaml'
 require_relative 'lib/interval_tree'
 
-require File.expand_path('../../../lib/recordandplayback', __FILE__)
-require File.expand_path('../../../lib/recordandplayback/interval_tree', __FILE__)
-
 include IntervalTree
 
 opts = Optimist.options do

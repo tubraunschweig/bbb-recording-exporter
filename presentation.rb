@@ -116,8 +116,8 @@ end
 SLIDES_HEIGHT = OUTPUT_HEIGHT
 
 # Input deskshare dimensions. Is scaled to fit whiteboard area keeping aspect ratio
-DESKSHARE_INPUT_WIDTH = 1280
-DESKSHARE_INPUT_HEIGHT = 720
+DESKSHARE_INPUT_WIDTH = 1920
+DESKSHARE_INPUT_HEIGHT = 1080
 
 # Center the deskshare
 DESKSHARE_Y_OFFSET = ((SLIDES_HEIGHT -
@@ -125,7 +125,7 @@ DESKSHARE_Y_OFFSET = ((SLIDES_HEIGHT -
   SLIDES_HEIGHT.to_f / DESKSHARE_INPUT_HEIGHT].min * DESKSHARE_INPUT_HEIGHT)) / 2).to_i
 
 WhiteboardElement = Struct.new(:begin, :end, :value, :id)
-WhiteboardSlide = Struct.new(:href, :begin, :end, :width, :height)
+WhiteboardSlide = Struct.new(:href, :begin, :end, :width, :height, :href2)
 
 def run_command(command, silent = false)
   Log.info("Running: #{command}") unless silent
@@ -185,7 +185,7 @@ def add_chapters(duration, slides)
 
     next if (chapter_end - chapter_start) <= 0.25
 
-    if slide.href.include?('deskshare')
+    if slide.href2.include?('deskshare')
       title = "Screen sharing #{deskshare_number}"
       deskshare_number += 1
     else
@@ -397,7 +397,7 @@ def parse_whiteboard_shapes(shape_reader)
 
       data = FFMPEG_REFERENCE_SUPPORT ? "file://#{path}" : base64_encode(path)
 
-      slides << WhiteboardSlide.new(data, slide_in, slide_out, node.attribute('width').to_f, node.attribute('height'))
+      slides << WhiteboardSlide.new(data, slide_in, slide_out, node.attribute('width').to_f, node.attribute('height'), path)
     end
 
     next unless node_name == 'g' && node_class == 'shape'

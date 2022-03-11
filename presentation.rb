@@ -16,8 +16,9 @@ require_relative 'lib/interval_tree'
 
 require 'optparse'
 require 'psych'
-require "shellwords"
+require 'shellwords'
 require 'logger'
+require 'Zlib'
 
 include IntervalTree
 

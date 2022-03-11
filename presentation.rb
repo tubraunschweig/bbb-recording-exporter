@@ -738,10 +738,8 @@ def render_video(duration, meeting_name)
           '[slides][cursor]overlay@m\' '
       else
         "-filter_complex '[2]sendcmd=f=#{@tmp}/timestamps/cursor_timestamps[cursor];" \
-          "[3]scale=w=#{WEBCAMS_WIDTH}:h=#{WEBCAMS_HEIGHT}[webcams];" \
-          "[0][1]overlay=x=#{WEBCAMS_WIDTH}[slides];" \
-                    '[slides][cursor]overlay@m[whiteboard];' \
-          "[whiteboard][webcams]overlay' "
+          "[0][1]overlay[slides];" \
+          '[slides][cursor]overlay@m\' '
       end
     else
       render << "-i #{@published_files}/video/webcams.#{VIDEO_EXTENSION} "

@@ -151,7 +151,7 @@ def add_captions
      language_names << "-metadata:s:s:#{i} language=#{caption['localeName'].downcase[0..2]} "
   end
 
-  render = "ffmpeg -hide_banner -loglevel error -i #{@tmp}/meeting-tmp.mp4 #{caption_input} " \
+  render = "ffmpeg -hide_banner -nostats -loglevel error -i #{@tmp}/meeting-tmp.mp4 #{caption_input} " \
            "-map 0:v -map 0:a #{maps} -c:v copy -c:a copy -c:s mov_text #{language_names} " \
            "-y #{@tmp}/meeting_captioned.mp4"
 
@@ -166,7 +166,7 @@ end
 
 def add_chapters(duration, slides)
   # Extract metadata
-  command = "ffmpeg -hide_banner -loglevel error -i #{@tmp}/meeting-tmp.mp4 -y -f ffmetadata #{@tmp}/meeting_metadata"
+  command = "ffmpeg -hide_banner -nostats -loglevel error -i #{@tmp}/meeting-tmp.mp4 -y -f ffmetadata #{@tmp}/meeting_metadata"
 
   success, = run_command(command)
   unless success
@@ -201,7 +201,7 @@ def add_chapters(duration, slides)
     file << chapter
   end
 
-  render = "ffmpeg -hide_banner -loglevel error -i #{@tmp}/meeting-tmp.mp4 " \
+  render = "ffmpeg -hide_banner -nostats -loglevel error -i #{@tmp}/meeting-tmp.mp4 " \
            "-i #{@tmp}/meeting_metadata -map_metadata 1 " \
            "-map_chapters 1 -codec copy -y -t #{duration} #{@tmp}/meeting_chapters.mp4"
 
@@ -691,7 +691,7 @@ def render_video(duration, meeting_name, deskshares)
   deskshare = !HIDE_DESKSHARE && File.file?("#{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION}")
   chat = !HIDE_CHAT && File.file?("#{@tmp}/chats/chat.svg")
 
-  render = "ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=#{BACKGROUND_COLOR}:s=#{OUTPUT_WIDTH}x#{OUTPUT_HEIGHT} " \
+  render = "ffmpeg -hide_banner -nostats -loglevel error -f lavfi -i color=c=#{BACKGROUND_COLOR}:s=#{OUTPUT_WIDTH}x#{OUTPUT_HEIGHT} " \
            "-f concat -safe 0 #{BASE_URI} -i #{@tmp}/timestamps/whiteboard_timestamps " \
            "-framerate 10 -loop 1 -i #{@tmp}/cursor/cursor.svg "
 
@@ -743,7 +743,7 @@ def render_video(duration, meeting_name, deskshares)
     if DESKSHARE_INPUT_WIDTH == SLIDES_WIDTH && DESKSHARE_INPUT_HEIGHT == SLIDES_HEIGHT
       FileUtils.cp("#{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION}","#{@tmp}/deskshare-tmp.mp4")
     else
-      render = "ffmpeg -hide_banner -loglevel error -i #{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION} " \
+      render = "ffmpeg -hide_banner -nostats -loglevel error -i #{@published_files}/deskshare/deskshare.#{VIDEO_EXTENSION} " \
         "-vf 'scale=w=#{SLIDES_WIDTH}:h=#{SLIDES_HEIGHT}:force_original_aspect_ratio=1,pad=#{SLIDES_WIDTH}:#{SLIDES_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=white' " \
         "-map 0:v -c:v libx264 -crf #{CONSTANT_RATE_FACTOR} -threads #{THREADS} #{@tmp}/deskshare-tmp.mp4"
 
@@ -762,7 +762,7 @@ def render_video(duration, meeting_name, deskshares)
       deskshare_y = DESKSHARE_Y_OFFSET
     end
 
-    render = "ffmpeg -hide_banner -loglevel error -i #{@tmp}/meeting-tmp.mp4 -i #{@tmp}/deskshare-tmp.mp4 -filter_complex \"[0]copy[out]"
+    render = "ffmpeg -hide_banner -nostats -loglevel error -i #{@tmp}/meeting-tmp.mp4 -i #{@tmp}/deskshare-tmp.mp4 -filter_complex \"[0]copy[out]"
     deskshares.each do |part|
       render << ";[out][1]overlay=x=#{deskshare_x}:y=#{deskshare_y}:enable='between(t,#{part.start},#{part.end})'[out]"
     end
@@ -774,7 +774,7 @@ def render_video(duration, meeting_name, deskshares)
     end
     FileUtils.mv("#{@tmp}/meeting-tmp1.mp4", "#{@tmp}/meeting-tmp.mp4")
   end
-  render = "ffmpeg -hide_banner -loglevel error -i #{@tmp}/meeting-tmp.mp4 -i #{@published_files}/video/webcams.#{VIDEO_EXTENSION} "
+  render = "ffmpeg -hide_banner -nostats -loglevel error -i #{@tmp}/meeting-tmp.mp4 -i #{@published_files}/video/webcams.#{VIDEO_EXTENSION} "
   render << "-map 0:v -map 1:a -c:v copy -c:a aac #{@tmp}/meeting-tmp1.mp4"
   success, = run_command(render)
   unless success
